@@ -1,0 +1,14 @@
+[Unit]
+Description=MyTube Git Sync
+Documentation=https://github.com/lehmann/mytube
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/mytube
+ExecStart=/opt/mytube/deploy/sync.sh
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mytube-sync

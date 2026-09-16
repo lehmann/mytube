@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# sync.sh — chamado pelo myyoutube-sync.timer
+# sync.sh — chamado pelo mytube-sync.timer
 # Detecta novos commits, reinstala deps e/ou reconstrói o cliente se necessário,
 # depois reinicia o serviço backend.
 
 set -euo pipefail
 
-APP_DIR="/opt/myyoutube"
-APP_USER="myyoutube"
+APP_DIR="/opt/mytube"
+APP_USER="mytube"
 BRANCH="main"
-TAG="myyoutube-sync"
+TAG="mytube-sync"
 
 log()  { logger -t "$TAG" "$*"; echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 info() { log "INFO  $*"; }
@@ -47,8 +47,8 @@ if echo "$CHANGED" | grep -qE "^client/"; then
     chmod -R a+rX "$APP_DIR/client/dist"
 fi
 
-info "Reiniciando myyoutube-server..."
-systemctl restart myyoutube-server
+info "Reiniciando mytube-server..."
+systemctl restart mytube-server
 
 info "Atualização concluída. HEAD: $(git rev-parse HEAD | cut -c1-7)"
 info "Arquivos alterados:"

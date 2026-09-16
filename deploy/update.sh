@@ -4,8 +4,8 @@
 
 set -euo pipefail
 
-APP_DIR="/opt/myyoutube"
-APP_USER="myyoutube"
+APP_DIR="/opt/mytube"
+APP_USER="mytube"
 BRANCH="main"
 
 [ "$EUID" -eq 0 ] || { echo "Execute como root: sudo bash $0"; exit 1; }
@@ -40,7 +40,7 @@ if echo "$CHANGED" | grep -qE "^client/"; then
     chmod -R a+rX "$APP_DIR/client/dist"
 fi
 
-systemctl restart myyoutube-server
+systemctl restart mytube-server
 echo ""
 echo "Serviço reiniciado. Status:"
-systemctl status myyoutube-server --no-pager -l
+systemctl status mytube-server --no-pager -l

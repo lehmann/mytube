@@ -1,6 +1,6 @@
 import { openDB } from 'idb'
 
-const DB_NAME = 'myyoutube'
+const DB_NAME = 'mytube'
 const STORE = 'videos'
 const META_STORE = 'meta'
 const VERSION = 1

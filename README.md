@@ -1,4 +1,4 @@
-# MyYouTube
+# MyTube
 
 Web app pessoal que funciona como intermediário para o YouTube: permite buscar e assistir vídeos com uma interface limpa (sem login, sem recomendações algorítmicas, sem anúncios) e armazena os vídeos assistidos no próprio browser para replay offline.
 
@@ -21,7 +21,7 @@ Web app pessoal que funciona como intermediário para o YouTube: permite buscar 
 
 ```bash
 git clone <repo>
-cd myyoutube
+cd mytube
 npm install
 ```
 
@@ -43,7 +43,7 @@ O Vite proxeia automaticamente chamadas `/api/*` para o backend em desenvolvimen
 ## Estrutura
 
 ```
-myyoutube/
+mytube/
 ├── package.json          # workspace root (npm workspaces)
 ├── server/
 │   ├── index.js          # Express app
@@ -98,7 +98,7 @@ O cache usa a [IndexedDB API](https://developer.mozilla.org/en-US/docs/Web/API/I
 | Limite típico | 5–10 MB | centenas de MB a vários GB |
 | Adequado para vídeo | não | sim |
 
-O banco se chama `myyoutube`, store `videos`. Cada entrada é `{ data: Uint8Array, mimeType: string, cachedAt: timestamp }`.
+O banco se chama `mytube`, store `videos`. Cada entrada é `{ data: Uint8Array, mimeType: string, cachedAt: timestamp }`.
 
 ## Notas técnicas
 

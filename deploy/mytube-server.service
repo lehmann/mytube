@@ -1,19 +1,19 @@
 [Unit]
-Description=MyYouTube Backend Server
-Documentation=https://github.com/lehmann/myyoutube
+Description=MyTube Backend Server
+Documentation=https://github.com/lehmann/mytube
 After=network.target
 
 [Service]
 Type=simple
-User=myyoutube
-Group=myyoutube
-WorkingDirectory=/opt/myyoutube
+User=mytube
+Group=mytube
+WorkingDirectory=/opt/mytube
 ExecStart=/usr/bin/node server/index.js
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=myyoutube-server
+SyslogIdentifier=mytube-server
 
 Environment=NODE_ENV=production
 Environment=PORT=3001

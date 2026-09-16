@@ -4,8 +4,8 @@
 #
 # O que este script faz:
 #   1. Instala Node.js 20, nginx, git e yt-dlp via apt/pip
-#   2. Cria o usuário de sistema "myyoutube"
-#   3. Clona o repositório em /opt/myyoutube
+#   2. Cria o usuário de sistema "mytube"
+#   3. Clona o repositório em /opt/mytube
 #   4. Instala dependências npm e constrói o cliente
 #   5. Registra e ativa os serviços systemd (backend + timer de sync)
 #   6. Configura o nginx como reverse proxy
@@ -13,15 +13,15 @@
 # Repositório privado?
 #   Configure um deploy key no GitHub e adicione-o em ~/.ssh/
 #   antes de executar, ou troque a REPO_URL por um token:
-#   https://<token>@github.com/lehmann/myyoutube
+#   https://<token>@github.com/lehmann/mytube
 
 set -euo pipefail
 
 # ── Configuração ────────────────────────────────────────────────────────────
-REPO_URL="https://github.com/lehmann/myyoutube"
+REPO_URL="https://github.com/lehmann/mytube"
 BRANCH="main"
-APP_DIR="/opt/myyoutube"
-APP_USER="myyoutube"
+APP_DIR="/opt/mytube"
+APP_USER="mytube"
 NODE_MAJOR=20
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -88,23 +88,23 @@ chmod +x "$APP_DIR/deploy/sync.sh" "$APP_DIR/deploy/update.sh"
 step "systemd"
 DEPLOY="$APP_DIR/deploy"
 
-cp "$DEPLOY/myyoutube-server.service" /etc/systemd/system/
-cp "$DEPLOY/myyoutube-sync.service"   /etc/systemd/system/
-cp "$DEPLOY/myyoutube-sync.timer"     /etc/systemd/system/
+cp "$DEPLOY/mytube-server.service" /etc/systemd/system/
+cp "$DEPLOY/mytube-sync.service"   /etc/systemd/system/
+cp "$DEPLOY/mytube-sync.timer"     /etc/systemd/system/
 
 systemctl daemon-reload
-systemctl enable --now myyoutube-server
-systemctl enable --now myyoutube-sync.timer
+systemctl enable --now mytube-server
+systemctl enable --now mytube-sync.timer
 
-info "myyoutube-server: $(systemctl is-active myyoutube-server)"
-info "myyoutube-sync.timer: $(systemctl is-active myyoutube-sync.timer)"
+info "mytube-server: $(systemctl is-active mytube-server)"
+info "mytube-sync.timer: $(systemctl is-active mytube-sync.timer)"
 
 # ── 8. nginx ─────────────────────────────────────────────────────────────────
 step "nginx"
-cp "$DEPLOY/nginx.conf" /etc/nginx/sites-available/myyoutube
+cp "$DEPLOY/nginx.conf" /etc/nginx/sites-available/mytube
 
 # Ativa o site e remove o default
-ln -sf /etc/nginx/sites-available/myyoutube /etc/nginx/sites-enabled/myyoutube
+ln -sf /etc/nginx/sites-available/mytube /etc/nginx/sites-enabled/mytube
 rm -f /etc/nginx/sites-enabled/default
 
 nginx -t
@@ -116,14 +116,14 @@ info "nginx recarregado."
 IP=$(hostname -I | awk '{print $1}')
 echo ""
 echo -e "${BOLD}╔══════════════════════════════════════╗${NC}"
-echo -e "${BOLD}║   MyYouTube instalado com sucesso!   ║${NC}"
+echo -e "${BOLD}║   MyTube instalado com sucesso!   ║${NC}"
 echo -e "${BOLD}╚══════════════════════════════════════╝${NC}"
 echo ""
 echo -e "  App:          ${GREEN}http://${IP}${NC}"
 echo -e "  Backend:      http://127.0.0.1:3001"
 echo -e "  Sync:         a cada 10 min (systemd timer)"
 echo ""
-echo -e "  Logs backend: ${YELLOW}journalctl -u myyoutube-server -f${NC}"
-echo -e "  Logs sync:    ${YELLOW}journalctl -u myyoutube-sync -f${NC}"
+echo -e "  Logs backend: ${YELLOW}journalctl -u mytube-server -f${NC}"
+echo -e "  Logs sync:    ${YELLOW}journalctl -u mytube-sync -f${NC}"
 echo -e "  Atualizar já: ${YELLOW}sudo bash $APP_DIR/deploy/update.sh${NC}"
 echo ""

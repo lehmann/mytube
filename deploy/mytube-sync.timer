@@ -1,5 +1,5 @@
 [Unit]
-Description=MyYouTube Git Sync — verifica atualizações a cada 10 minutos
+Description=MyTube Git Sync — verifica atualizações a cada 10 minutos
 After=network-online.target
 
 [Timer]

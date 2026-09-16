@@ -1,4 +1,4 @@
-# CLAUDE.md — MyYouTube
+# CLAUDE.md — MyTube
 
 ## Comandos essenciais
 
@@ -29,7 +29,7 @@ npm run build --workspace=client # build de produção
 ## Cache de vídeo — regras importantes
 
 - Sempre usar **IndexedDB** (`client/src/services/videoCache.js`). Nunca `localStorage` para dados de vídeo.
-- A store IndexedDB se chama `videos` no banco `myyoutube`.
+- A store IndexedDB se chama `videos` no banco `mytube`.
 - Estrutura de cada entrada: `{ data: Uint8Array, mimeType: string, cachedAt: number }`
 
 ## Fluxo do player (`VideoPlayer.jsx`) — MSE single-request
@@ -53,17 +53,26 @@ npm run build --workspace=client # build de produção
 
 ## Pipeline yt-dlp + ffmpeg
 
+`resolveFormat()` chama `yt-dlp --dump-json` (com cache de 55 min) para obter as URLs assinadas
+dos streams DASH separados. Depois o ffmpeg busca ambos do CDN em paralelo e começa a emitir
+fragmentos fMP4 em 1-3 segundos, sem aguardar o download completo.
+
 ```
-yt-dlp -f "bestvideo[vcodec^=avc1][height<=720]...+bestaudio" -o - URL
-    |
-    v (MPEG-TS ou fMP4 parcial)
-ffmpeg -i pipe:0 -c:v copy -c:a copy \
+yt-dlp --dump-json URL  →  { videoUrl, audioUrl }   (apenas resolução, sem download)
+                                    |
+               ┌────────────────────┴────────────────────┐
+               ↓                                         ↓
+    CDN YouTube (vídeo H.264)             CDN YouTube (áudio AAC)
+               └────────────────────┬────────────────────┘
+                                    ↓
+ffmpeg -i VIDEO_URL -i AUDIO_URL -c:v copy -c:a copy \
        -bsf:a aac_adtstoasc \           ← AAC-ADTS → AAC-ASC (exigido pelo MP4)
        -movflags frag_keyframe+empty_moov+default_base_moof \  ← fMP4 streamable
        -f mp4 pipe:1
-    |
-    v (chunked Transfer-Encoding)
-browser (MSE SourceBuffer)
+                                    |
+                          (chunked Transfer-Encoding)
+                                    ↓
+                         browser (MSE SourceBuffer)
 ```
 
 **`JS_RUNTIME_ARG`**: `--js-runtimes node:${process.execPath}` — obrigatório desde yt-dlp 2026.8.19 para que o yt-dlp encontre o Node.js e consiga decifrar URLs do YouTube. Exportado de `server/lib/resolveFormat.js`.
@@ -77,9 +86,9 @@ deploy/
 ├── setup.sh                  # provisionamento inicial — rodar uma vez como root
 ├── update.sh                 # atualização manual imediata
 ├── sync.sh                   # chamado pelo timer; não interativo
-├── myyoutube-server.service  # systemd: backend Node.js
-├── myyoutube-sync.service    # systemd: oneshot que executa sync.sh
-├── myyoutube-sync.timer      # systemd: dispara sync.service a cada 10 min
+├── mytube-server.service  # systemd: backend Node.js
+├── mytube-sync.service    # systemd: oneshot que executa sync.sh
+├── mytube-sync.timer      # systemd: dispara sync.service a cada 10 min
 └── nginx.conf                # reverse proxy + serve do client/dist
 ```
 
@@ -93,9 +102,9 @@ FFMPEG_PATH=/usr/bin/ffmpeg   # opcional se ffmpeg estiver no PATH
 
 **Logs:**
 ```bash
-journalctl -u myyoutube-server -f
-journalctl -u myyoutube-sync   -f
-systemctl list-timers myyoutube-sync.timer
+journalctl -u mytube-server -f
+journalctl -u mytube-sync   -f
+systemctl list-timers mytube-sync.timer
 ```
 
 ## Armadilhas conhecidas
