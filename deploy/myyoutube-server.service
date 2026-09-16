@@ -1,0 +1,25 @@
+[Unit]
+Description=MyYouTube Backend Server
+Documentation=https://github.com/lehmann/myyoutube
+After=network.target
+
+[Service]
+Type=simple
+User=myyoutube
+Group=myyoutube
+WorkingDirectory=/opt/myyoutube
+ExecStart=/usr/bin/node server/index.js
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=myyoutube-server
+
+Environment=NODE_ENV=production
+Environment=PORT=3001
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

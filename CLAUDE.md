@@ -45,6 +45,36 @@ Node.js v18 — **não atualize** `@distube/ytdl-core` além de `4.14.x`; versõ
 | `GET /api/info/:videoId` | `server/routes/info.js` | metadados via ytdl-core |
 | `GET /api/stream/:videoId` | `server/routes/stream.js` | proxy com cache de URL (55 min TTL) |
 
+## Deploy (Ubuntu Server)
+
+Todos os arquivos ficam em `deploy/`. O servidor instala Node.js 20 (NodeSource), o que libera
+atualizar `@distube/ytdl-core` além de 4.14.x, se desejado.
+
+```
+deploy/
+├── setup.sh                  # provisionamento inicial — rodar uma vez como root
+├── update.sh                 # atualização manual imediata
+├── sync.sh                   # chamado pelo timer; não interativo
+├── myyoutube-server.service  # systemd: backend Node.js
+├── myyoutube-sync.service    # systemd: oneshot que executa sync.sh
+├── myyoutube-sync.timer      # systemd: dispara sync.service a cada 10 min
+└── nginx.conf                # reverse proxy + serve do client/dist
+```
+
+**Serviço de sync:** usa `runuser -u myyoutube` para operações de arquivo e `systemctl restart`
+diretamente (roda como root). Detecta o que mudou via `git diff --name-only` e só refaz o que
+for necessário (npm ci se package-lock mudou, build se client/ mudou).
+
+**nginx:** `proxy_buffering off` em `/api/stream/` é obrigatório — sem isso o nginx tenta
+acumular o vídeo inteiro na memória antes de enviar ao browser.
+
+**Logs:**
+```bash
+journalctl -u myyoutube-server -f
+journalctl -u myyoutube-sync   -f
+systemctl list-timers myyoutube-sync.timer
+```
+
 ## Armadilhas conhecidas
 
 - **URLs do CDN expiram**: o `stream.js` mantém um `Map` em memória com TTL de 55 min. Se o servidor ficar muito tempo rodando e o cache expirar durante uma reprodução, o cliente pode receber 502 — basta recarregar.

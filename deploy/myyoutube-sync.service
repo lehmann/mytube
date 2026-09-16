@@ -1,0 +1,14 @@
+[Unit]
+Description=MyYouTube Git Sync
+Documentation=https://github.com/lehmann/myyoutube
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/myyoutube
+ExecStart=/opt/myyoutube/deploy/sync.sh
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=myyoutube-sync

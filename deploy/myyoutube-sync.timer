@@ -1,0 +1,12 @@
+[Unit]
+Description=MyYouTube Git Sync — verifica atualizações a cada 10 minutos
+After=network-online.target
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+RandomizedDelaySec=30s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
