@@ -3,7 +3,7 @@
 # Execute uma única vez como root: sudo bash deploy/setup.sh
 #
 # O que este script faz:
-#   1. Instala Node.js 20, nginx e git via apt
+#   1. Instala Node.js 20, nginx, git e yt-dlp via apt/pip
 #   2. Cria o usuário de sistema "myyoutube"
 #   3. Clona o repositório em /opt/myyoutube
 #   4. Instala dependências npm e constrói o cliente
@@ -45,10 +45,13 @@ else
     info "Node: $(node --version) | npm: $(npm --version)"
 fi
 
-# ── 2. nginx + git ───────────────────────────────────────────────────────────
-step "nginx e git"
-apt-get install -y nginx git
-info "nginx $(nginx -v 2>&1 | grep -oP '\d+\.\d+\.\d+') | git $(git --version | cut -d' ' -f3)"
+# ── 2. nginx + git + yt-dlp ──────────────────────────────────────────────────
+step "nginx, git e yt-dlp"
+apt-get install -y nginx git python3-pip
+# yt-dlp: instalado globalmente via pip para ficar em /usr/local/bin
+pip3 install -q --upgrade yt-dlp
+info "nginx $(nginx -v 2>&1 | grep -oP '\d+\.\d+\.\d+')"
+info "yt-dlp $(yt-dlp --version)"
 
 # ── 3. Usuário de sistema ────────────────────────────────────────────────────
 step "Usuário $APP_USER"

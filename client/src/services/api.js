@@ -22,6 +22,10 @@ export function streamUrl(videoId) {
   return `${BASE}/stream/${videoId}`
 }
 
+export function downloadUrl(videoId) {
+  return `${BASE}/download/${videoId}`
+}
+
 export function formatViews(n) {
   if (!n) return ''
   if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B visualizações`

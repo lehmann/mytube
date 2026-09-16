@@ -17,6 +17,7 @@ SyslogIdentifier=myyoutube-server
 
 Environment=NODE_ENV=production
 Environment=PORT=3001
+Environment=YTDLP_PATH=/usr/local/bin/yt-dlp
 
 NoNewPrivileges=true
 PrivateTmp=true

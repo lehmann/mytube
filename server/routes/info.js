@@ -1,6 +1,9 @@
 import { Router } from 'express';
-import ytdl from '@distube/ytdl-core';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import { YTDLP, JS_RUNTIME_ARG } from '../lib/resolveFormat.js';
 
+const execFileAsync = promisify(execFile);
 const router = Router();
 
 router.get('/:videoId', async (req, res) => {
@@ -11,20 +14,30 @@ router.get('/:videoId', async (req, res) => {
   }
 
   try {
-    const info = await ytdl.getInfo(`https://www.youtube.com/watch?v=${videoId}`);
-    const d = info.videoDetails;
+    const { stdout } = await execFileAsync(
+      YTDLP,
+      [...JS_RUNTIME_ARG, '--dump-json', '--no-playlist', `https://www.youtube.com/watch?v=${videoId}`],
+      { timeout: 30_000 }
+    );
+
+    const d = JSON.parse(stdout);
+
+    // yt-dlp retorna upload_date como "YYYYMMDD"
+    const publishDate = d.upload_date
+      ? `${d.upload_date.slice(0, 4)}-${d.upload_date.slice(4, 6)}-${d.upload_date.slice(6, 8)}`
+      : null;
 
     res.json({
       id: videoId,
       title: d.title,
       description: d.description ?? '',
-      channel: d.author.name,
-      channelId: d.author.channel_url ?? null,
-      thumbnail: d.thumbnails[d.thumbnails.length - 1]?.url ?? `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
-      duration: parseInt(d.lengthSeconds, 10),
-      views: parseInt(d.viewCount, 10),
-      publishDate: d.publishDate ?? null,
-      keywords: d.keywords ?? [],
+      channel: d.uploader ?? d.channel ?? '',
+      channelId: d.channel_url ?? null,
+      thumbnail: d.thumbnail ?? `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
+      duration: d.duration ?? 0,
+      views: d.view_count ?? 0,
+      publishDate,
+      keywords: d.tags ?? [],
     });
   } catch (err) {
     console.error('[info]', err.message);

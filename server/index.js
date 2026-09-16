@@ -3,6 +3,7 @@ import cors from 'cors';
 import searchRouter from './routes/search.js';
 import infoRouter from './routes/info.js';
 import streamRouter from './routes/stream.js';
+import downloadRouter from './routes/download.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -13,6 +14,7 @@ app.use(express.json());
 app.use('/api/search', searchRouter);
 app.use('/api/info', infoRouter);
 app.use('/api/stream', streamRouter);
+app.use('/api/download', downloadRouter);
 
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);

@@ -4,8 +4,6 @@ import { FFMPEG, resolveFormat } from '../lib/resolveFormat.js';
 
 const router = Router();
 
-// Fallback para browsers sem suporte a MediaSource Extensions.
-// Mesmo pipeline do download: ffmpeg busca do CDN e emite fMP4 em tempo real.
 router.get('/:videoId', async (req, res) => {
   const { videoId } = req.params;
 
@@ -17,18 +15,20 @@ router.get('/:videoId', async (req, res) => {
   try {
     ({ videoUrl, audioUrl } = await resolveFormat(videoId));
   } catch (err) {
-    console.error('[stream] resolveFormat:', err.message);
+    console.error('[download] resolveFormat:', err.message);
     return res.status(500).json({ error: err.message });
   }
 
-  console.log(`[stream] ${videoId}`);
+  console.log(`[download] ${videoId} — iniciando ffmpeg`);
 
+  // ffmpeg busca vídeo e áudio diretamente do CDN do YouTube em paralelo e já
+  // começa a emitir fragmentos fMP4 nos primeiros segundos — sem buffer completo.
   const ffmpeg = spawn(FFMPEG, [
     '-i', videoUrl,
     '-i', audioUrl,
     '-c:v', 'copy',
     '-c:a', 'copy',
-    '-bsf:a', 'aac_adtstoasc',
+    '-bsf:a', 'aac_adtstoasc',   // AAC-ADTS → AAC-ASC exigido pelo MP4
     '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
     '-f', 'mp4',
     '-loglevel', 'warning',
@@ -41,23 +41,28 @@ router.get('/:videoId', async (req, res) => {
 
   ffmpeg.stdout.pipe(res);
 
+  let totalBytes = 0;
+  ffmpeg.stdout.on('data', (chunk) => { totalBytes += chunk.length; });
+
   ffmpeg.stderr.on('data', (d) => {
     const line = d.toString().trim();
-    if (line) console.log(`[stream/ffmpeg] ${line}`);
+    if (line) console.log(`[download/ffmpeg] ${line}`);
   });
 
   ffmpeg.on('error', (err) => {
-    console.error('[stream] ffmpeg error:', err.message);
+    console.error('[download] ffmpeg error:', err.message);
     if (!res.headersSent) res.status(500).json({ error: err.message });
   });
 
   ffmpeg.on('close', (code) => {
-    console.log(`[stream] done ${videoId} — ffmpeg exit ${code}`);
+    const mb = (totalBytes / 1024 / 1024).toFixed(1);
+    console.log(`[download] done ${videoId} — ${mb} MB — ffmpeg exit ${code}`);
     if (!res.writableEnded) res.end();
   });
 
   req.on('close', () => {
     ffmpeg.kill();
+    console.log(`[download] aborted ${videoId}`);
   });
 });
 
