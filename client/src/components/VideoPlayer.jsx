@@ -1,168 +1,259 @@
 import { useEffect, useRef, useState } from 'react'
 import { videoCache } from '../services/videoCache.js'
-import { downloadUrl, formatBytes } from '../services/api.js'
+import { downloadUrl, streamUrl, formatBytes } from '../services/api.js'
 
-// Tenta codec strings do mais específico ao mais genérico.
-// MSE exige uma string válida para criar o SourceBuffer.
+const CHUNK_SIZE = 4 * 1024 * 1024 // 4 MB por chunk no IndexedDB
+
 const MSE_MIME = (() => {
   if (typeof MediaSource === 'undefined') return null
   const candidates = [
-    'video/mp4; codecs="avc1.4d401f,mp4a.40.2"', // H.264 Main 3.1 + AAC-LC (720p típico)
-    'video/mp4; codecs="avc1.42E01E,mp4a.40.2"', // H.264 Baseline + AAC-LC
+    'video/mp4; codecs="avc1.4d401f,mp4a.40.2"',
+    'video/mp4; codecs="avc1.42E01E,mp4a.40.2"',
     'video/mp4; codecs="avc1,mp4a.40.2"',
     'video/mp4',
   ]
-  return candidates.find((t) => MediaSource.isTypeSupported(t)) ?? null
+  return candidates.find(t => MediaSource.isTypeSupported(t)) ?? null
 })()
 
+function concat(arrays) {
+  const total = arrays.reduce((n, a) => n + a.length, 0)
+  const out = new Uint8Array(total)
+  let off = 0
+  for (const a of arrays) { out.set(a, off); off += a.length }
+  return out
+}
+
+// appendBuffer serializado via Promise — SourceBuffer só aceita um append por vez
+function sbAppend(sb, data) {
+  return new Promise((resolve, reject) => {
+    sb.addEventListener('updateend', resolve, { once: true })
+    sb.addEventListener('error', reject, { once: true })
+    try { sb.appendBuffer(data) } catch (e) { reject(e) }
+  })
+}
+
+// Limpa o SourceBuffer inteiramente. Só chamado quando sb.updating === false
+// (garantido por sempre ser chamado após a resolução de sbAppend).
+function sbClear(sb) {
+  if (!sb.buffered.length) return Promise.resolve()
+  return new Promise(resolve => {
+    sb.addEventListener('updateend', resolve, { once: true })
+    sb.remove(0, Infinity)
+  })
+}
+
 export default function VideoPlayer({ videoId }) {
-  const videoRef = useRef(null)
-  const [cacheState, setCacheState] = useState('unknown')
-  const [downloadProgress, setDownloadProgress] = useState(0)
-  const [cachedSize, setCachedSize] = useState(0)
-  const abortRef = useRef(null)
+  const videoRef   = useRef(null)
+  const abortRef   = useRef(null)
+  const msRef      = useRef(null)
   const blobUrlRef = useRef(null)
-  const mediaSourceRef = useRef(null)
+
+  const [status, setStatus]       = useState('unknown') // unknown|cached|downloading|streaming
+  const [progress, setProgress]   = useState(0)
+  const [cachedSize, setCachedSize] = useState(0)
 
   useEffect(() => {
     if (!videoId) return
 
-    let cancelled = false
+    let alive = true
+    abortRef.current?.abort()
     abortRef.current = new AbortController()
 
-    async function load() {
-      // ── 1. Cache hit → reproduz do IndexedDB (seeking completo) ──────────
-      const cached = await videoCache.get(videoId)
-      if (cancelled) return
+    // Libera recursos do vídeo anterior
+    if (blobUrlRef.current) { URL.revokeObjectURL(blobUrlRef.current); blobUrlRef.current = null }
+    try { if (msRef.current?.readyState === 'open') msRef.current.endOfStream() } catch {}
+    msRef.current = null
 
-      if (cached) {
-        const blob = new Blob([cached.data], { type: cached.mimeType })
-        blobUrlRef.current = URL.createObjectURL(blob)
-        videoRef.current.src = blobUrlRef.current
-        setCacheState('cached')
-        setCachedSize(cached.data.byteLength)
-        return
-      }
+    setStatus('unknown')
+    setProgress(0)
+    setCachedSize(0)
 
-      // ── 2. Cache miss ─────────────────────────────────────────────────────
-      if (MSE_MIME) {
-        await loadViaMSE()
-      } else {
-        // Fallback: browsers sem suporte a MSE (raro em 2026)
-        console.warn('[VideoPlayer] MSE não suportado, usando src direto')
-        videoRef.current.src = downloadUrl(videoId)
-        setCacheState('miss')
-      }
-    }
+    // ── Reprodução a partir do IndexedDB ────────────────────────────────────
+    async function playFromCache(meta) {
+      setStatus('cached')
+      setCachedSize(meta.totalSize)
 
-    // MSE: única requisição que serve tanto para reprodução em tempo real
-    // quanto para acumular o vídeo no IndexedDB.
-    async function loadViaMSE() {
       const ms = new MediaSource()
-      mediaSourceRef.current = ms
+      msRef.current = ms
       blobUrlRef.current = URL.createObjectURL(ms)
       videoRef.current.src = blobUrlRef.current
 
-      await new Promise((resolve, reject) => {
-        ms.addEventListener('sourceopen', resolve, { once: true })
-        ms.addEventListener('error', (e) => reject(new Error('MediaSource error: ' + e)), { once: true })
+      await new Promise((res, rej) => {
+        ms.addEventListener('sourceopen', res, { once: true })
+        ms.addEventListener('error', rej, { once: true })
       })
-      if (cancelled) return
+      if (!alive) return
+
+      const sb = ms.addSourceBuffer(MSE_MIME)
+
+      let cursor = 0
+      // Seek pendente: onSeeking apenas registra o target; o loop de feed responde.
+      let seekTarget = null
+
+      async function feed(start) {
+        cursor = start
+        while (cursor < meta.totalChunks && alive) {
+          if (seekTarget !== null) {
+            const target = seekTarget
+            seekTarget = null
+            await sbClear(sb)
+            feed(target)
+            return
+          }
+          const entry = await videoCache.getChunk(videoId, cursor++)
+          if (!entry || !alive) return
+          try { await sbAppend(sb, entry.data) } catch { return }
+        }
+        if (alive && seekTarget === null) {
+          try { if (ms.readyState === 'open') ms.endOfStream() } catch {}
+        }
+      }
+
+      function onSeeking() {
+        const { currentTime, duration } = videoRef.current ?? {}
+        if (!duration || !isFinite(duration) || !meta.totalChunks) return
+        // Estimativa aproximada: vai ao chunk mais próximo do timestamp
+        seekTarget = Math.max(0, Math.floor((currentTime / duration) * meta.totalChunks) - 1)
+      }
+
+      videoRef.current.addEventListener('seeking', onSeeking)
+      feed(0)
+
+      return () => videoRef.current?.removeEventListener('seeking', onSeeking)
+    }
+
+    // ── Streaming do servidor + escrita incremental no IndexedDB ────────────
+    async function streamAndSave() {
+      setStatus('downloading')
+
+      const ms = new MediaSource()
+      msRef.current = ms
+      blobUrlRef.current = URL.createObjectURL(ms)
+      videoRef.current.src = blobUrlRef.current
+
+      await new Promise((res, rej) => {
+        ms.addEventListener('sourceopen', res, { once: true })
+        ms.addEventListener('error', rej, { once: true })
+      })
+      if (!alive) return
 
       let sb
       try {
         sb = ms.addSourceBuffer(MSE_MIME)
-      } catch (e) {
-        console.error('[VideoPlayer] addSourceBuffer falhou:', e.message, '— usando src direto')
-        videoRef.current.src = downloadUrl(videoId)
-        setCacheState('miss')
+      } catch {
+        videoRef.current.src = streamUrl(videoId)
+        setStatus('streaming')
         return
       }
 
-      setCacheState('downloading')
-
-      const response = await fetch(downloadUrl(videoId), { signal: abortRef.current.signal })
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
-
-      const contentType = response.headers.get('content-type') ?? 'video/mp4'
-      const contentLength = parseInt(response.headers.get('content-length') ?? '0', 10)
-      const reader = response.body.getReader()
-
-      const chunks = []
-      let received = 0
-
-      // SourceBuffer só aceita appendBuffer quando não está atualizando.
-      // Mantemos uma fila para serializar os appends.
-      const queue = []
-      let flushing = false
-
-      function flush() {
-        if (flushing || queue.length === 0 || sb.updating) return
-        flushing = true
-        try { sb.appendBuffer(queue.shift()) } catch (e) {
-          console.warn('[MSE] appendBuffer error:', e.message)
-          flushing = false
-        }
+      // Reserva o slot no IndexedDB ANTES do fetch — o servidor leva vários segundos
+      // para responder (yt-dlp resolve o formato), e durante esse tempo o DownloadButton
+      // não veria nenhum download em progresso e iniciaria um segundo download duplicado.
+      let saving = false
+      if (!(await videoCache.isComplete(videoId))) {
+        try { await videoCache.initDownload(videoId, 'video/mp4'); saving = true } catch {}
       }
 
-      sb.addEventListener('updateend', () => { flushing = false; flush() })
-      sb.addEventListener('error', (e) => console.error('[MSE] SourceBuffer error:', e))
+      const res = await fetch(downloadUrl(videoId), { signal: abortRef.current.signal })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
 
-      // Lê o stream chunk a chunk
+      const contentLength = parseInt(res.headers.get('content-length') ?? '0', 10)
+      const reader        = res.body.getReader()
+
+      // Fila para serializar os appendBuffer do MSE
+      const mseQueue = []
+      let flushing = false
+      function mseFlush() {
+        if (flushing || !mseQueue.length || sb.updating) return
+        flushing = true
+        try { sb.appendBuffer(mseQueue.shift()) } catch { flushing = false }
+      }
+      sb.addEventListener('updateend', () => { flushing = false; mseFlush() })
+
+      // Buffer para escrita por lotes no IndexedDB
+      let idbBuf = [], idbBufSize = 0, idbChunkIdx = 0
+      let received = 0
+      let aborted = false
+
       while (true) {
         const { done, value } = await reader.read()
 
-        if (cancelled) { reader.cancel(); break }
+        if (!alive) { reader.cancel(); aborted = true; break }
 
         if (done) {
-          // Finaliza MSE
-          const finalize = () => {
-            try { if (ms.readyState === 'open') ms.endOfStream() } catch {}
+          if (saving) {
+            if (idbBuf.length > 0) {
+              await videoCache.appendChunk(videoId, idbChunkIdx++, concat(idbBuf))
+            }
+            await videoCache.finalizeDownload(videoId, idbChunkIdx, received)
           }
-          sb.updating ? sb.addEventListener('updateend', finalize, { once: true }) : finalize()
-
-          // Salva no IndexedDB
-          const total = new Uint8Array(received)
-          let offset = 0
-          for (const c of chunks) { total.set(c, offset); offset += c.length }
-          await videoCache.set(videoId, { data: total, mimeType: contentType })
-
-          setCacheState('cached')
+          const end = () => { try { if (ms.readyState === 'open') ms.endOfStream() } catch {} }
+          sb.updating ? sb.addEventListener('updateend', end, { once: true }) : end()
+          setStatus('cached')
           setCachedSize(received)
-          setDownloadProgress(100)
-          console.log(`[VideoPlayer] cached ${videoId} — ${(received / 1024 / 1024).toFixed(1)} MB`)
+          setProgress(100)
           break
         }
 
-        chunks.push(value)
-        received += value.length
-        queue.push(value)
-        flush()
+        // Reprodução via MSE
+        mseQueue.push(value)
+        mseFlush()
 
-        if (contentLength > 0) {
-          setDownloadProgress(Math.round((received / contentLength) * 100))
+        // Acumulação para IndexedDB
+        if (saving) {
+          idbBuf.push(value)
+          idbBufSize += value.length
+          if (idbBufSize >= CHUNK_SIZE) {
+            await videoCache.appendChunk(videoId, idbChunkIdx++, concat(idbBuf))
+            idbBuf = []
+            idbBufSize = 0
+          }
         }
+
+        received += value.length
+        if (contentLength > 0) setProgress(Math.round((received / contentLength) * 100))
       }
+
+      if (aborted && saving) await videoCache.cancelDownload(videoId)
     }
 
-    load().catch((err) => {
-      if (!cancelled && err.name !== 'AbortError') {
-        console.error('[VideoPlayer] erro:', err.message)
-        setCacheState('miss')
+    // ── Ponto de entrada ────────────────────────────────────────────────────
+    let seekingCleanup = null
+
+    async function run() {
+      const meta = await videoCache.getMeta(videoId)
+      if (!alive) return
+
+      if (meta?.complete) {
+        seekingCleanup = await playFromCache(meta)
+        return
+      }
+
+      if (!MSE_MIME) {
+        videoRef.current.src = streamUrl(videoId)
+        setStatus('streaming')
+        return
+      }
+
+      await streamAndSave()
+    }
+
+    run().catch(err => {
+      if (!alive || err.name === 'AbortError') return
+      console.error('[VideoPlayer]', err.message)
+      if (videoRef.current) {
+        videoRef.current.src = streamUrl(videoId)
+        setStatus('streaming')
       }
     })
 
     return () => {
-      cancelled = true
+      alive = false
       abortRef.current?.abort()
-      if (blobUrlRef.current) {
-        URL.revokeObjectURL(blobUrlRef.current)
-        blobUrlRef.current = null
-      }
-      if (mediaSourceRef.current?.readyState === 'open') {
-        try { mediaSourceRef.current.endOfStream() } catch {}
-        mediaSourceRef.current = null
-      }
+      seekingCleanup?.()
+      if (blobUrlRef.current) { URL.revokeObjectURL(blobUrlRef.current); blobUrlRef.current = null }
+      try { if (msRef.current?.readyState === 'open') msRef.current.endOfStream() } catch {}
+      msRef.current = null
     }
   }, [videoId])
 
@@ -179,29 +270,26 @@ export default function VideoPlayer({ videoId }) {
       </div>
 
       <div className="mt-2 flex items-center gap-2 text-xs text-yt-muted">
-        {cacheState === 'cached' && (
+        {status === 'cached' && (
           <>
             <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
             <span>Armazenado localmente ({formatBytes(cachedSize)})</span>
           </>
         )}
-        {cacheState === 'downloading' && (
+        {status === 'downloading' && (
           <>
-            <span className="w-2 h-2 rounded-full bg-yellow-400 flex-shrink-0 animate-pulse" />
+            <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse flex-shrink-0" />
             <div className="flex items-center gap-2">
-              <span>Salvando no cache{downloadProgress > 0 ? ` — ${downloadProgress}%` : '…'}</span>
-              {downloadProgress > 0 && (
+              <span>Salvando no cache{progress > 0 ? ` — ${progress}%` : '…'}</span>
+              {progress > 0 && (
                 <div className="w-24 h-1 bg-yt-border rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-yellow-400 transition-all duration-300"
-                    style={{ width: `${downloadProgress}%` }}
-                  />
+                  <div className="h-full bg-yellow-400 transition-all duration-300" style={{ width: `${progress}%` }} />
                 </div>
               )}
             </div>
           </>
         )}
-        {cacheState === 'miss' && (
+        {status === 'streaming' && (
           <>
             <span className="w-2 h-2 rounded-full bg-yt-border flex-shrink-0" />
             <span>Streaming</span>

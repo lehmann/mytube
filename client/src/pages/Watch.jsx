@@ -1,18 +1,16 @@
 import { useEffect, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
 import VideoPlayer from '../components/VideoPlayer.jsx'
+import DownloadButton from '../components/DownloadButton.jsx'
 import VideoCard from '../components/VideoCard.jsx'
-import { getVideoInfo, searchVideos, formatViews, formatDuration } from '../services/api.js'
-import { videoCache } from '../services/videoCache.js'
+import { getVideoInfo, searchVideos, formatViews } from '../services/api.js'
 
 export default function Watch() {
   const { videoId } = useParams()
-  const navigate = useNavigate()
-  const [info, setInfo] = useState(null)
-  const [related, setRelated] = useState([])
-  const [infoError, setInfoError] = useState(null)
+  const [info, setInfo]               = useState(null)
+  const [related, setRelated]         = useState([])
+  const [infoError, setInfoError]     = useState(null)
   const [descExpanded, setDescExpanded] = useState(false)
-  const [isCached, setIsCached] = useState(false)
 
   useEffect(() => {
     if (!videoId) return
@@ -23,37 +21,23 @@ export default function Watch() {
     setRelated([])
     setDescExpanded(false)
 
-    videoCache.has(videoId).then((cached) => {
-      if (!cancelled) setIsCached(cached)
-    })
-
     getVideoInfo(videoId)
       .then((data) => {
         if (cancelled) return
         setInfo(data)
-        // Fetch related via title search
         return searchVideos(data.title, 12)
       })
       .then((res) => {
-        if (!cancelled && res) {
-          setRelated(res.videos.filter((v) => v.id !== videoId))
-        }
+        if (!cancelled && res) setRelated(res.videos.filter(v => v.id !== videoId))
       })
-      .catch((err) => {
-        if (!cancelled) setInfoError(err.message)
-      })
+      .catch((err) => { if (!cancelled) setInfoError(err.message) })
 
     return () => { cancelled = true }
   }, [videoId])
 
-  async function handleDeleteCache() {
-    await videoCache.delete(videoId)
-    setIsCached(false)
-  }
-
   return (
     <div className="flex flex-col lg:flex-row gap-6 p-4 max-w-screen-2xl mx-auto">
-      {/* Main column */}
+      {/* Coluna principal */}
       <div className="flex-1 min-w-0">
         <VideoPlayer videoId={videoId} />
 
@@ -75,17 +59,7 @@ export default function Watch() {
                 </p>
               </div>
 
-              {isCached && (
-                <button
-                  onClick={handleDeleteCache}
-                  className="flex items-center gap-1.5 text-xs text-yt-muted hover:text-yt-red border border-yt-border rounded-full px-3 py-1.5 transition-colors"
-                >
-                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
-                  </svg>
-                  Remover do cache
-                </button>
-              )}
+              <DownloadButton videoId={videoId} title={info.title} />
             </div>
 
             {info.description && (
@@ -114,14 +88,12 @@ export default function Watch() {
         )}
       </div>
 
-      {/* Sidebar — related */}
+      {/* Sidebar — relacionados */}
       {related.length > 0 && (
         <div className="lg:w-96 flex-shrink-0">
           <h2 className="text-yt-text text-sm font-medium mb-3">Relacionados</h2>
           <div className="space-y-3">
-            {related.map((v) => (
-              <VideoCard key={v.id} video={v} />
-            ))}
+            {related.map(v => <VideoCard key={v.id} video={v} />)}
           </div>
         </div>
       )}
